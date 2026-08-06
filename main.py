@@ -1,23 +1,44 @@
-from sqlalchemy import create_engine,Column, Integer, String
-from sqlalchemy.orm import sessionmaker, declarative_base,session
 from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 app = FastAPI()
 
-engine = create_engine('sqlite:///example.db'
-                       , connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine)
+# Database configuration
+DATABASE_URL = "sqlite:///./example.db"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
+)
+
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
 Base = declarative_base()
 
-class todo(Base):
-    __tablename__ = 'todos'
+
+# SQLAlchemy Model
+class Todo(Base):
+    __tablename__ = "todos"
+
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     description = Column(String)
     completed = Column(Integer, default=0)
 
+
+# Create tables
 Base.metadata.create_all(bind=engine)
 
+
+# Pydantic Schema
+class TodoCreate(BaseModel):
+    title: str
+    description: str
+
+
+# Dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -25,7 +46,43 @@ def get_db():
     finally:
         db.close()
 
-@app.post("/")
-def home(db: session = Depends(get_db)):
-    return {"message": "DB connected successfully!"}
-          
+
+# Create Todo
+@app.post("/todos")
+def create_todo(todo: TodoCreate, db: Session = Depends(get_db)):
+    new_todo = Todo(
+        title=todo.title,
+        description=todo.description,
+        completed=0
+    )
+
+    db.add(new_todo)
+    db.commit()
+    db.refresh(new_todo)
+
+    return {
+        "message": "Todo created successfully",
+        "data": {
+            "id": new_todo.id,
+            "title": new_todo.title,
+            "description": new_todo.description,
+            "completed": new_todo.completed
+        }
+    }
+
+@app.get("/todos")
+def get_todos(db:Session = Depends(get_db)):
+    todos = db.query(Todo).all()
+
+    return{
+        "Total":len(todos),
+        "data": todos
+    }
+
+@app.get("/todos/{todo_id}")
+def get_todo(todo_id: int, db: Session = Depends(get_db)):
+    todo = db.query(Todo).filter(Todo.id == todo_id).first()
+
+    if not todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return todo
